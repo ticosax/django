@@ -5,6 +5,7 @@ the SQL domain.
 # for backwards-compatibility in Django 1.11
 from django.core.exceptions import EmptyResultSet  # NOQA: F401
 from django.db.models.sql.constants import INNER, LOUTER
+from django.db.models.constants import LOOKUP_SEP
 
 
 class MultiJoin(Exception):
@@ -41,7 +42,7 @@ class Join(object):
         - relabeled_clone()
     """
     def __init__(self, table_name, parent_alias, table_alias, join_type,
-                 join_field, nullable):
+                 join_field, nullable, filtered_relation=None):
         # Join table
         self.table_name = table_name
         self.parent_alias = parent_alias
@@ -56,6 +57,7 @@ class Join(object):
         self.join_field = join_field
         # Is this join nullabled?
         self.nullable = nullable
+        self.filtered_relation = filtered_relation
 
     def as_sql(self, compiler, connection):
         """
@@ -85,6 +87,25 @@ class Join(object):
             extra_sql, extra_params = compiler.compile(extra_cond)
             join_conditions.append('(%s)' % extra_sql)
             params.extend(extra_params)
+        elif self.filtered_relation:
+            condition = self.filtered_relation.condition
+            for child, value in condition.children:
+                cond = compiler.query.where_class()
+                parts = child.split(LOOKUP_SEP)
+                try:
+                    field_name, related_field_name, lookup = parts
+                except ValueError:
+                    field_name, related_field_name = parts
+                    lookup = 'exact'
+                assert field_name == self.filtered_relation.field_name
+                field = self.join_field.remote_field.model._meta.get_field(related_field_name)
+                lookup = field.get_lookup(lookup)(
+                    field.get_col(self.table_alias), value)
+                cond.add(lookup, condition.connector)
+                extra_sql, extra_params = compiler.compile(cond)
+                join_conditions.append('%s(%s)' % ('NOT ' if condition.negated else '',
+                                                   extra_sql))
+                params.extend(extra_params)
 
         if not join_conditions:
             # This might be a rel on the other end of an actual declared field.
@@ -103,14 +124,15 @@ class Join(object):
         new_table_alias = change_map.get(self.table_alias, self.table_alias)
         return self.__class__(
             self.table_name, new_parent_alias, new_table_alias, self.join_type,
-            self.join_field, self.nullable)
+            self.join_field, self.nullable, self.filtered_relation)
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             return (
                 self.table_name == other.table_name and
                 self.parent_alias == other.parent_alias and
-                self.join_field == other.join_field
+                self.join_field == other.join_field and
+                self.filtered_relation == other.filtered_relation
             )
         return False
 

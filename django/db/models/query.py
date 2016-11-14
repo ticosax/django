@@ -994,6 +994,14 @@ class QuerySet(object):
         clone._db = alias
         return clone
 
+    def filtered_relation(self, field_name, alias=None, condition=None):
+        """
+        Allows to add extra filter on relations.
+        """
+        clone = self._clone()
+        clone.query.add_filtered_relation(FilteredRelation(field_name, alias, condition))
+        return clone
+
     ###################################
     # PUBLIC INTROSPECTION ATTRIBUTES #
     ###################################
@@ -1709,3 +1717,18 @@ def get_related_populators(klass_info, select, db):
         rel_cls = RelatedPopulator(rel_klass_info, select, db)
         iterators.append(rel_cls)
     return iterators
+
+
+class FilteredRelation(object):
+
+    def __init__(self, field_name, alias, condition):
+        self.field_name = field_name
+        self.alias = alias
+        self.condition = condition
+
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return (self.field_name == other.field_name and
+                    self.alias == other.alias and
+                    self.condition == other.condition)
+        return False
