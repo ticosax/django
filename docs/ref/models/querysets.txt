@@ -1241,12 +1241,16 @@ where prefetching with a custom ``QuerySet`` is useful:
 .. method:: filtered_relation(relation_name, alias=None, condition=None)
 
 It supports additional filtering when establishing a relationship.
-``alias`` and ``condition`` are required named argument.
+``alias`` and ``condition`` are required to be named arguments.
 
 Example::
     Restaurant.objects.filtered_relation('pizzas', alias='pizzas_vegetarian',
         condition=Q(pizzas__vegetarian=True)).filter(pizzas_vegetarian__name__icontains='Mozzarella')
 
+
+You need to be aware of some limitations.
+The :meth:`filtered_relation()` can not have condition that
+span over deep relations. The condition can only apply on fields that have ``Field.is_relation is False``.
 
 ``extra()``
 ~~~~~~~~~~~

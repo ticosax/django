@@ -64,7 +64,7 @@ class FilteredRelationTests(TestCase):
                         'book', alias='book_alice',
                         condition=Q(book__title__iexact='poem by alice'))
                     .filter(book_alice__isnull=False))
-        self.assertIn('INNER JOIN "filtered_relation_book" ON', str(queryset.query))
+        self.assertIn('INNER JOIN "filtered_relation_book" book_alice ON', str(queryset.query))
 
     @unittest.skipUnless(connection.vendor == 'mysql', 'MySQL specific test.')
     def test_filtered_relation_alias_mapping_mysql(self):
@@ -129,14 +129,16 @@ class FilteredRelationTests(TestCase):
             qs, ["<Author: Alice>"])
 
     def test_filtered_relation_with_foreign_key_error(self):
-        with self.assertRaises(FieldError):
+        with self.assertRaisesMessage(FieldError, "Filtered relation 'alice_favourite_books'"
+                                      " cannot operate on foreign key 'author__favourite_books__author'."):
             list(Book.objects.filtered_relation('author__favourite_books',
                                                 alias='alice_favourite_books',
                                                 condition=Q(author__favourite_books__author=self.author1))
                  .filter(alice_favourite_books__title__icontains='poem'))
 
     def test_filtered_relation_with_foreign_key_on_condition_error(self):
-        with self.assertRaises(FieldError):
+        with self.assertRaisesMessage(FieldError, "Filtered relation 'book_edited_by_b'"
+                                      " cannot operate on foreign key 'book__editor__name__icontains'."):
             list(Author.objects
                  .filtered_relation(
                      'book',
@@ -145,9 +147,9 @@ class FilteredRelationTests(TestCase):
                  .filter(book_edited_by_b__isnull=False))
 
     def test_filtered_relation_with_empty_relation_name_error(self):
-        with self.assertRaises(FieldError):
+        with self.assertRaisesMessage(FieldError, 'FilterRelation expects a non-empty relation_name'):
             Book.objects.filtered_relation('', alias='blank', condition=Q(blank=''))
 
     def test_filtered_relation_with_empty_alias_error(self):
-        with self.assertRaises(FieldError):
+        with self.assertRaisesMessage(FieldError, 'FilterRelation expects a non-empty alias'):
             Book.objects.filtered_relation('favourite_books', alias='', condition=Q(blank=''))
