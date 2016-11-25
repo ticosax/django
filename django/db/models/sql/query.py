@@ -889,7 +889,7 @@ class Query(object):
         """
         return len([1 for count in self.alias_refcount.values() if count])
 
-    def join(self, join, reuse=None):
+    def join(self, join, reuse=None, force_reuse=None):
         """
         Returns an alias for the join in 'connection', either reusing an
         existing alias for that join or creating a new one. 'connection' is a
@@ -913,8 +913,9 @@ class Query(object):
 
         The 'join_field' is the field we are joining along (if any).
         """
-        reuse = [a for a, j in self.alias_map.items()
-                 if (reuse is None or a in reuse) and j == join]
+        if force_reuse:
+            reuse = [a for a, j in self.alias_map.items()
+                     if (a in force_reuse) and j.equals(join, with_filtered_relation=False)]
         if reuse:
             self.ref_alias(reuse[0])
             return reuse[0]
@@ -1101,7 +1102,8 @@ class Query(object):
                 (name, lhs.output_field.__class__.__name__))
 
     def build_filter(self, filter_expr, branch_negated=False, current_negated=False,
-                     can_reuse=None, connector=AND, allow_joins=True, split_subq=True):
+                     can_reuse=None, force_reuse=None, connector=AND, allow_joins=True,
+                     split_subq=True):
         """
         Builds a WhereNode for a single filter clause, but doesn't add it
         to this Query. Query.add_q() will then add this filter to the where
@@ -1122,6 +1124,8 @@ class Query(object):
         upper in the code by add_q().
 
         The 'can_reuse' is a set of reusable joins for multijoins.
+
+        If 'force_reuse' is not None, then only joins in that set will be reused.
 
         The method will create a filter clause that can be added to the current
         query. However, if the filter isn't added to the query then the caller
@@ -1152,7 +1156,8 @@ class Query(object):
 
         try:
             field, sources, opts, join_list, path = self.setup_joins(
-                parts, opts, alias, can_reuse=can_reuse, allow_many=allow_many)
+                parts, opts, alias, can_reuse=can_reuse, force_reuse=force_reuse,
+                allow_many=allow_many)
 
             # Prevent iterator from being consumed by check_related_objects()
             if isinstance(value, Iterator):
@@ -1213,7 +1218,7 @@ class Query(object):
     def add_filter(self, filter_clause):
         self.add_q(Q(**{filter_clause[0]: filter_clause[1]}))
 
-    def add_q(self, q_object):
+    def add_q(self, q_object, where=None, used_aliases=None):
         """
         A preprocessor for the internal _add_q(). Responsible for doing final
         join promotion.
@@ -1224,11 +1229,13 @@ class Query(object):
         # (Consider case where rel_a is LOUTER and rel_a__col=1 is added - if
         # rel_a doesn't produce any rows, then the whole condition must fail.
         # So, demotion is OK.
+        where = where if where is not None else self.where
+        used_aliases = used_aliases if used_aliases is not None else self.used_aliases
         existing_inner = set(
             (a for a in self.alias_map if self.alias_map[a].join_type == INNER))
-        clause, _ = self._add_q(q_object, self.used_aliases)
+        clause, _ = self._add_q(q_object, used_aliases)
         if clause:
-            self.where.add(clause, AND)
+            where.add(clause, AND)
         self.demote_joins(existing_inner)
 
     def _add_q(self, q_object, used_aliases, branch_negated=False,
@@ -1259,6 +1266,32 @@ class Query(object):
                 target_clause.add(child_clause, connector)
         needed_inner = joinpromoter.update_join_types(self)
         return target_clause, needed_inner
+
+    def build_filtered_relation_q(
+            self, q_object, force_reuse, branch_negated=False,
+            current_negated=False):
+        """
+        Adds a Q-object to the current filter.
+        """
+        connector = q_object.connector
+        current_negated = current_negated ^ q_object.negated
+        branch_negated = branch_negated or q_object.negated
+        target_clause = self.where_class(connector=connector,
+                                         negated=q_object.negated)
+        for child in q_object.children:
+            if isinstance(child, Node):
+                child_clause, _ = self._build_filtered_relation_q(
+                    child, force_reuse, branch_negated,
+                    current_negated)
+            else:
+                child_clause, _ = self.build_filter(
+                    child, force_reuse=force_reuse, branch_negated=branch_negated,
+                    current_negated=current_negated, connector=connector,
+                    allow_joins=True, split_subq=False,
+                )
+            if child_clause:
+                target_clause.add(child_clause, connector)
+        return target_clause
 
     def add_filtered_relation(self, filtered_relation):
         for lookup in chain((filtered_relation.relation_name,),
@@ -1293,6 +1326,7 @@ class Query(object):
                 name = opts.pk.name
 
             field = None
+            filtered_relation = None
             try:
                 field = opts.get_field(name)
             except FieldDoesNotExist:
@@ -1361,7 +1395,7 @@ class Query(object):
                             PathInfo(final_field.model._meta, opts, targets, final_field, False, True)
                         )
             if hasattr(field, 'get_path_info'):
-                pathinfos = field.get_path_info()
+                pathinfos = field.get_path_info(filtered_relation)
                 if not allow_many:
                     for inner_pos, p in enumerate(pathinfos):
                         if p.m2m:
@@ -1386,7 +1420,8 @@ class Query(object):
                 break
         return path, final_field, targets, names[pos + 1:]
 
-    def setup_joins(self, names, opts, alias, can_reuse=None, allow_many=True):
+    def setup_joins(self, names, opts, alias, can_reuse=None, force_reuse=None,
+                    allow_many=True):
         """
         Compute the necessary table joins for the passage through the fields
         given in 'names'. 'opts' is the Options class for the current model
@@ -1419,33 +1454,21 @@ class Query(object):
         # Then, add the path to the query's joins. Note that we can't trim
         # joins at this stage - we will need the information about join type
         # of the trimmed joins.
-        for pos, join in enumerate(path):
+        for join in path:
+            filtered_relation = None if not join.filtered_relation else join.filtered_relation.clone()
             opts = join.to_opts
             if join.direct:
                 nullable = self.is_nullable(join.join_field)
             else:
                 nullable = True
-
-            try:
-                filtered_relation = self._filtered_relations[names[pos]]
-            except (KeyError, IndexError):
-                connection = Join(opts.db_table, alias, None, INNER, join.join_field, nullable)
-            else:
-                table_alias = filtered_relation.alias
-                if table_alias not in self.tables:
-                    self.table_map[opts.db_table] = [table_alias]
-                    self.alias_refcount[table_alias] = 1
-                    self.tables.append(table_alias)
-                    connection = Join(opts.db_table, alias, table_alias, INNER, join.join_field, nullable,
-                                      filtered_relation=filtered_relation)
-                    self.alias_map[table_alias] = connection
-                    filtered_relation.pre_compile(self)
-                else:
-                    connection = self.alias_map[table_alias]
-                can_reuse.add(table_alias)
+            connection = Join(
+                opts.db_table, alias, None, INNER, join.join_field, nullable,
+                filtered_relation)
             reuse = can_reuse if join.m2m else None
-            alias = self.join(connection, reuse=reuse)
+            alias = self.join(connection, reuse=reuse, force_reuse=force_reuse)
             joins.append(alias)
+            if filtered_relation:
+                filtered_relation.path = joins[:]
         return final_field, targets, opts, joins, path
 
     def trim_joins(self, targets, joins, path):
@@ -1465,6 +1488,8 @@ class Query(object):
         joins = joins[:]
         for pos, info in enumerate(reversed(path)):
             if len(joins) == 1 or not info.direct:
+                break
+            if info.filtered_relation:
                 break
             join_targets = set(t.column for t in info.join_field.foreign_related_fields)
             cur_targets = set(t.column for t in targets)
