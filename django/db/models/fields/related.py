@@ -716,22 +716,21 @@ class ForeignObject(RelatedField):
         """
         return None
 
-    def get_path_info(self):
+    def get_path_info(self, filtered_relation=None):
         """
         Get path from this field to the related model.
         """
         opts = self.remote_field.model._meta
         from_opts = self.model._meta
-        return [PathInfo(from_opts, opts, self.foreign_related_fields, self, False, True)]
+        return [PathInfo(from_opts, opts, self.foreign_related_fields, self, False, True, filtered_relation)]
 
-    def get_reverse_path_info(self):
+    def get_reverse_path_info(self, filtered_relation=None):
         """
         Get path from the related model to this field's model.
         """
         opts = self.model._meta
         from_opts = self.remote_field.model._meta
-        pathinfos = [PathInfo(from_opts, opts, (opts.pk,), self.remote_field, not self.unique, False)]
-        return pathinfos
+        return [PathInfo(from_opts, opts, (opts.pk,), self.remote_field, not self.unique, False, filtered_relation)]
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -908,14 +907,13 @@ class ForeignKey(ForeignObject):
     def target_field(self):
         return self.foreign_related_fields[0]
 
-    def get_reverse_path_info(self):
+    def get_reverse_path_info(self, filtered_relation=None):
         """
         Get path from the related model to this field's model.
         """
         opts = self.model._meta
         from_opts = self.remote_field.model._meta
-        pathinfos = [PathInfo(from_opts, opts, (opts.pk,), self.remote_field, not self.unique, False)]
-        return pathinfos
+        return [PathInfo(from_opts, opts, (opts.pk,), self.remote_field, not self.unique, False, filtered_relation)]
 
     def validate(self, value, model_instance):
         if self.remote_field.parent_link:
@@ -1517,7 +1515,7 @@ class ManyToManyField(RelatedField):
             )
         return name, path, args, kwargs
 
-    def _get_path_info(self, direct=False):
+    def _get_path_info(self, direct=False, filtered_relation=None):
         """
         Called by both direct and indirect m2m traversal.
         """
@@ -1527,10 +1525,10 @@ class ManyToManyField(RelatedField):
         linkfield2 = int_model._meta.get_field(self.m2m_reverse_field_name())
         if direct:
             join1infos = linkfield1.get_reverse_path_info()
-            join2infos = linkfield2.get_path_info()
+            join2infos = linkfield2.get_path_info(filtered_relation)
         else:
             join1infos = linkfield2.get_reverse_path_info()
-            join2infos = linkfield1.get_path_info()
+            join2infos = linkfield1.get_path_info(filtered_relation)
 
         # Get join infos between the last model of join 1 and the first model
         # of join 2. Assume the only reason these may differ is due to model
@@ -1549,11 +1547,11 @@ class ManyToManyField(RelatedField):
         pathinfos.extend(join2infos)
         return pathinfos
 
-    def get_path_info(self):
-        return self._get_path_info(direct=True)
+    def get_path_info(self, filtered_relation=None):
+        return self._get_path_info(direct=True, filtered_relation=filtered_relation)
 
-    def get_reverse_path_info(self):
-        return self._get_path_info(direct=False)
+    def get_reverse_path_info(self, filtered_relation=None):
+        return self._get_path_info(direct=False, filtered_relation=filtered_relation)
 
     def _get_m2m_db_table(self, opts):
         """
