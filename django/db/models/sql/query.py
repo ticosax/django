@@ -680,7 +680,7 @@ class Query(object):
             for model, values in six.iteritems(seen):
                 callback(target, model, values)
 
-    def table_alias(self, table_name, create=False):
+    def table_alias(self, table_name, create=False, filtered_relation=None):
         """
         Returns a table alias for the given table_name and whether this is a
         new alias or not.
@@ -700,8 +700,8 @@ class Query(object):
             alias_list.append(alias)
         else:
             # The first occurrence of a table uses the table name directly.
-            alias = table_name
-            self.table_map[alias] = [alias]
+            alias = filtered_relation.alias if filtered_relation is not None else table_name
+            self.table_map[table_name] = [alias]
         self.alias_refcount[alias] = 1
         self.tables.append(alias)
         return alias, True
@@ -904,6 +904,9 @@ class Query(object):
         (matching the connection) are reusable, or it can be a set containing
         the aliases that can be reused.
 
+        The 'force_reuse' parameter is the same type of 'reuse' but with difference
+        that it bypasses the 'reuse' paramter. It is used when computing.
+
         A join is always created as LOUTER if the lhs alias is LOUTER to make
         sure we do not generate chains like t1 LOUTER t2 INNER t3. All new
         joins are created as LOUTER if nullable is True.
@@ -916,12 +919,15 @@ class Query(object):
         if force_reuse:
             reuse = [a for a, j in self.alias_map.items()
                      if (a in force_reuse) and j.equals(join, with_filtered_relation=False)]
+        else:
+            reuse = [a for a, j in self.alias_map.items()
+                     if (reuse is None or a in reuse) and j == join]
         if reuse:
             self.ref_alias(reuse[0])
             return reuse[0]
 
         # No reuse is possible, so we need a new alias.
-        alias, _ = self.table_alias(join.table_name, create=True)
+        alias, _ = self.table_alias(join.table_name, create=True, filtered_relation=join.filtered_relation)
         if join.join_type:
             if self.alias_map[join.parent_alias].join_type == LOUTER or join.nullable:
                 join_type = LOUTER
@@ -1267,9 +1273,7 @@ class Query(object):
         needed_inner = joinpromoter.update_join_types(self)
         return target_clause, needed_inner
 
-    def build_filtered_relation_q(
-            self, q_object, force_reuse, branch_negated=False,
-            current_negated=False):
+    def build_filtered_relation_q(self, q_object, force_reuse, branch_negated=False, current_negated=False):
         """
         Adds a Q-object to the current filter.
         """
@@ -1281,8 +1285,8 @@ class Query(object):
         for child in q_object.children:
             if isinstance(child, Node):
                 child_clause, _ = self._build_filtered_relation_q(
-                    child, force_reuse, branch_negated,
-                    current_negated)
+                    child, force_reuse=force_reuse, branch_negated=branch_negated,
+                    current_negated=current_negated)
             else:
                 child_clause, _ = self.build_filter(
                     child, force_reuse=force_reuse, branch_negated=branch_negated,
@@ -1298,7 +1302,7 @@ class Query(object):
                             dict(filtered_relation.condition.children).keys()):
             lookups, parts, _ = self.solve_lookup_type(lookup)
             if len(parts) > (1 + len(lookups)):
-                raise FieldError("Filtered relation %r can not operate on foreign keys %s." % (
+                raise FieldError("Filtered relation %r cannot operate on foreign key %r." % (
                     filtered_relation.alias, lookup))
         self._filtered_relations[filtered_relation.alias] = filtered_relation
 
@@ -1390,9 +1394,11 @@ class Query(object):
                         final_field = opts.parents[int_model]
                         targets = (final_field.remote_field.get_related_field(),)
                         opts = int_model._meta
-                        path.append(PathInfo(final_field.model._meta, opts, targets, final_field, False, True))
+                        path.append(PathInfo(final_field.model._meta, opts, targets, final_field, False, True,
+                                             filtered_relation))
                         cur_names_with_path[1].append(
-                            PathInfo(final_field.model._meta, opts, targets, final_field, False, True)
+                            PathInfo(final_field.model._meta, opts, targets, final_field, False, True,
+                                     filtered_relation)
                         )
             if hasattr(field, 'get_path_info'):
                 pathinfos = field.get_path_info(filtered_relation)
@@ -1433,6 +1439,9 @@ class Query(object):
         that can be reused. Note that non-reverse foreign keys are always
         reusable when using setup_joins().
 
+        The 'force_reuse' can be used to skip 'can_reuse' parameter and force the relation
+        on given connections.
+
         If 'allow_many' is False, then any reverse foreign key seen will
         generate a MultiJoin exception.
 
@@ -1455,15 +1464,20 @@ class Query(object):
         # joins at this stage - we will need the information about join type
         # of the trimmed joins.
         for join in path:
-            filtered_relation = None if not join.filtered_relation else join.filtered_relation.clone()
+            if join.filtered_relation:
+                filtered_relation = join.filtered_relation.clone()
+                table_alias = filtered_relation.alias
+            else:
+                filtered_relation = None
+                table_alias = None
             opts = join.to_opts
             if join.direct:
                 nullable = self.is_nullable(join.join_field)
             else:
                 nullable = True
             connection = Join(
-                opts.db_table, alias, None, INNER, join.join_field, nullable,
-                filtered_relation)
+                opts.db_table, alias, table_alias, INNER, join.join_field, nullable,
+                filtered_relation=filtered_relation)
             reuse = can_reuse if join.m2m else None
             alias = self.join(connection, reuse=reuse, force_reuse=force_reuse)
             joins.append(alias)
@@ -1516,7 +1530,7 @@ class Query(object):
             field_list = name.split(LOOKUP_SEP)
             field, sources, opts, join_list, path = self.setup_joins(
                 field_list, self.get_meta(),
-                self.get_initial_alias(), reuse)
+                self.get_initial_alias(), can_reuse=reuse)
             targets, _, join_list = self.trim_joins(sources, join_list, path)
             if len(targets) > 1:
                 raise FieldError("Referencing multicolumn fields with F() objects "
@@ -1696,7 +1710,8 @@ class Query(object):
                 # from the model on which the lookup failed.
                 raise
             else:
-                names = sorted(list(get_field_names_from_opts(opts)) + list(self.extra) + list(self.annotation_select))
+                names = sorted(list(get_field_names_from_opts(opts)) + list(self.extra) +
+                               list(self.annotation_select) + list(self._filtered_relations))
                 raise FieldError("Cannot resolve keyword %r into field. "
                                  "Choices are: %s" % (name, ", ".join(names)))
 
