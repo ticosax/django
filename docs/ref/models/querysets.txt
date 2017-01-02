@@ -1149,7 +1149,8 @@ It supports additional filtering when establishing a relationship.
 ``alias`` and ``condition`` are required to be named arguments.
 
 Example::
-    Restaurant.objects.filtered_relation('pizzas', alias='pizzas_vegetarian', condition=Q(pizzas__vegetarian=True)).filter(pizzas_vegetarian__name__icontains='Mozzarella')
+    Restaurant.objects.filtered_relation('pizzas', alias='pizzas_vegetarian',
+        condition=Q(pizzas__vegetarian=True)).filter(pizzas_vegetarian__name__icontains='Mozzarella')
 
 
     You need to be aware of some limitations.
