@@ -1152,8 +1152,6 @@ Example::
     Restaurant.objects.filtered_relation('pizzas', alias='pizzas_vegetarian', condition=Q(pizzas__vegetarian=True)).filter(pizzas_vegetarian__name__icontains='Mozzarella')
 
 
-.. note::
-
     You need to be aware of some limitations.
     The :meth:`filtered_relation()` can not have condition that
     span over deep relations. The condition can only apply on fields that have ``Field.is_relation is False``.
