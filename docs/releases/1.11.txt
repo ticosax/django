@@ -360,6 +360,10 @@ Models
 * Added :meth:`.QuerySet.union`, :meth:`~.QuerySet.intersection`, and
   :meth:`~.QuerySet.difference`.
 
+* Added the :meth:`QuerySet.filtered_relation
+  <django.db.models.query.QuerySet.filtered_relation>` method to querysets that
+  allows to pass custom filtering inside the ``ON`` SQL clause.
+
 Requests and Responses
 ~~~~~~~~~~~~~~~~~~~~~~
 
