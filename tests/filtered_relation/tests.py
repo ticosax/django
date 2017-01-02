@@ -2,10 +2,10 @@ import unittest
 
 from django.core.exceptions import FieldError
 from django.db import connection
-from django.db.models import Q
+from django.db.models import Case, Count, F, Q, When
 from django.test import TestCase
 
-from .models import Author, Book, Editor
+from .models import Author, Book, Borrower, Editor, RentalSession, Reservation
 
 
 class FilteredRelationTests(TestCase):
@@ -153,3 +153,83 @@ class FilteredRelationTests(TestCase):
     def test_filtered_relation_with_empty_alias_error(self):
         with self.assertRaisesMessage(FieldError, 'FilterRelation expects a non-empty alias'):
             Book.objects.filtered_relation('favourite_books', alias='', condition=Q(blank=''))
+
+
+class FilteredRelationWithAggregationTests(TestCase):
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.author1 = Author.objects.create(name='Alice')
+
+        cls.editor_a = Editor.objects.create(name='a')
+
+        cls.book1 = Book.objects.create(
+            title='Poem by Alice',
+            editor=cls.editor_a,
+            author=cls.author1)
+
+        cls.borrower1 = Borrower.objects.create(name='Jenny')
+        cls.borrower2 = Borrower.objects.create(name='Kevin')
+        # borrower 1 reserve, rent and return book1
+        Reservation.objects.create(
+            borrower=cls.borrower1,
+            book=cls.book1,
+            state=Reservation.STOPPED)
+        RentalSession.objects.create(
+            borrower=cls.borrower1,
+            book=cls.book1,
+            state=RentalSession.STOPPED,
+        )
+        # borrower2 reserve, rent and return book1
+        Reservation.objects.create(
+            borrower=cls.borrower2,
+            book=cls.book1,
+            state=Reservation.STOPPED)
+        RentalSession.objects.create(
+            borrower=cls.borrower2,
+            book=cls.book1,
+            state=RentalSession.STOPPED)
+
+    def test_filtered_relation_enforce_aggregation_correctness(self):
+        """
+        Test case that shows how filtered_relation not only improve performances,
+        but also insure correctness of results when aggregation and multiple LEFT JOIN are involved.
+
+        Use Case:
+
+            Books can be reserved then rented by a borrower.
+            Each reservation and rental_session are recorded with Reservation and RentalSession models.
+            Every time a reservation or a rental session is over, their state change to 'stopped'.
+
+        Goal: Count number of books that are either currently reserved or rented by borrower1 or available.
+        """
+        qs = (Book.objects
+              .annotate(is_reserved_or_rented_by=Case(
+                  When(reservation__state=Reservation.NEW, then=F('reservation__borrower__pk')),
+                  When(rental_session__state=RentalSession.NEW, then=F('rental_session__borrower__pk')),
+                  default=None))
+              .filter(Q(is_reserved_or_rented_by=self.borrower1.pk) | Q(state=Book.AVAILABLE))
+              .distinct()
+              .order_by())  # disable implicit grouping
+        self.assertEqual(qs.count(), 1)
+        # If count is equal to 1 we expect also the same aggregation to return the same result
+        # but it fails by returning 4.
+        self.assertQuerysetEqual(qs.annotate(total=Count('pk')).values('total'), ["{'total': 4}"])
+
+        qs = (Book.objects
+              .filtered_relation(
+                  'reservation',
+                  alias='active_reservations',
+                  condition=Q(reservation__state=Reservation.NEW, reservation__borrower=self.borrower1))
+              .filtered_relation(
+                  'rental_session',
+                  alias='active_rental_sessions',
+                  condition=Q(rental_session__state=RentalSession.NEW, rental_session__borrower=self.borrower1))
+              .filter(
+                  (Q(active_reservations__isnull=False) | Q(active_rental_sessions__isnull=False)) |
+                  Q(state=Book.AVAILABLE))
+              .distinct()
+              .order_by())  # disable implicit grouping
+        self.assertEqual(qs.count(), 1)
+        # Thanks to filtered_relation the aggregation is now correct
+        self.assertQuerysetEqual(qs.annotate(total=Count('pk')).values('total'), ["{'total': 1}"])
