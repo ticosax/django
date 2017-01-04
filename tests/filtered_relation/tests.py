@@ -192,8 +192,8 @@ class FilteredRelationWithAggregationTests(TestCase):
 
     def test_filtered_relation_enforce_aggregation_correctness(self):
         """
-        Test case that shows how filtered_relation not only improve performances,
-        but also insure correctness of results when aggregation and multiple LEFT JOIN are involved.
+        Test case that shows how filtered_relation not only improves performance,
+        but also ensure correctness of results when aggregation and multiple LEFT JOIN are involved.
 
         Use Case:
 
