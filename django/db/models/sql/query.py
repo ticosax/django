@@ -1269,8 +1269,10 @@ class Query(object):
         # (Consider case where rel_a is LOUTER and rel_a__col=1 is added - if
         # rel_a doesn't produce any rows, then the whole condition must fail.
         # So, demotion is OK.
-        where = where if where is not None else self.where
-        used_aliases = used_aliases if used_aliases is not None else self.used_aliases
+        if where is None:
+            where = self.where
+        if used_aliases is None:
+            used_aliases = self.used_aliases
         existing_inner = set(
             (a for a in self.alias_map if self.alias_map[a].join_type == INNER))
         clause, _ = self._add_q(q_object, used_aliases)
