@@ -5,10 +5,9 @@ from django.utils.encoding import python_2_unicode_compatible
 @python_2_unicode_compatible
 class Author(models.Model):
     name = models.CharField(max_length=50, unique=True)
-    favourite_books = models.ManyToManyField(
-        'Book',
-        related_name='preferred_by_authors',
-        related_query_name='preferred_by_authors')
+    favourite_books = models.ManyToManyField('Book',
+                                             related_name='preferred_by_authors',
+                                             related_query_name='preferred_by_authors')
 
     def __str__(self):
         return self.name
