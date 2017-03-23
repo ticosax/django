@@ -1372,7 +1372,7 @@ class Query(object):
             except FieldDoesNotExist:
                 if name in self.annotation_select:
                     field = self.annotation_select[name].output_field
-                elif name in self._filtered_relations:
+                elif name in self._filtered_relations and pos == 0:
                     filtered_relation = self._filtered_relations[name]
                     field = opts.get_field(filtered_relation.relation_name)
                 elif pos == 0:
