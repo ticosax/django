@@ -1,11 +1,10 @@
 ===========================
-Django 1.9.13 release notes
+Django 1.8.18 release notes
 ===========================
 
 *April 4, 2017*
 
-Django 1.9.13 fixes two security issues and a bug in 1.9.12. This is the final
-release of the 1.9.x series.
+Django 1.8.18 fixes two security issues in 1.8.17.
 
 CVE-2017-7233: Open redirect and possible XSS attack via user-supplied numeric redirect URLs
 ============================================================================================
@@ -29,9 +28,3 @@ functionality.
 
 Note, however, that this view has always carried a warning that it is not
 hardened for production use and should be used only as a development aid.
-
-Bugfixes
-========
-
-* Fixed a regression in the ``timesince`` and ``timeuntil`` filters that caused
-  incorrect results for dates in a leap year (:ticket:`27637`).
