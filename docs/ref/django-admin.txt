@@ -966,7 +966,7 @@ Python interpreter, use ``python`` as the interface name, like so::
    is deprecated and will be removed in Django 2.0.
 
 .. _IPython: https://ipython.org/
-.. _bpython: http://bpython-interpreter.org/
+.. _bpython: https://bpython-interpreter.org/
 
 .. django-admin-option:: --nostartup
 
@@ -1591,7 +1591,7 @@ Example usage::
 
     django-admin migrate --pythonpath='/home/djangoprojects/myproject'
 
-.. _import search path: http://www.diveintopython.net/getting_to_know_python/everything_is_an_object.html
+.. _import search path: http://www.diveintopython3.net/your-first-python-program.html#importsearchpath
 
 .. django-admin-option:: --settings SETTINGS
 
@@ -1778,7 +1778,7 @@ To call a management command from code use ``call_command``.
 ``*args``
   a list of arguments accepted by the command. Arguments are passed to the
   argument parser, so you can use the same style as you would on the command
-  line. For example, ``call_command('flush', 'verbosity=0')``.
+  line. For example, ``call_command('flush', '--verbosity=0')``.
 
 ``**options``
   named options accepted on the command-line. Options are passed to the command
