@@ -67,6 +67,11 @@ class DeferTests(AssertionMixin, TestCase):
         with self.assertRaisesMessage(TypeError, msg):
             Primary.objects.only(None)
 
+    def test_only_with_many_to_one(self):
+        qs = Secondary.objects.all().only('primary')
+        with self.assertNumQueries(1):
+            qs[0].primary
+
     def test_defer_extra(self):
         qs = Primary.objects.all()
         self.assert_delayed(qs.defer("name").extra(select={"a": 1})[0], 1)
